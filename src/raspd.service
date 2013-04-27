@@ -1,0 +1,15 @@
+[Unit]
+Description=Raspberry Pi Hello Server
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=-/usr/bin/python2 /root/raspd.py
+Restart=always
+KillSignal=SIGINT
+TimeoutSec=250
+
+[Install]
+WantedBy=basic.target
