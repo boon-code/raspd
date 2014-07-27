@@ -1,4 +1,5 @@
 import socket
+import time
 
 DEFAULT_SIZE = 1024
 DEFAULT_TIMEOUT=20
@@ -54,20 +55,30 @@ class Udp(object):
         self._sock.close()
 
 
-u = Udp('', 4298)
-u.bind(port=4297)
-u.set_broadcast(True)
 
-u.broadcast("Hello everybody!\n")
-u.set_timeout(4.0)
-
-try:
+def main ():
     while True:
-        data, addr = u.recv()
-        print "[%s]: %s" % (addr, data)
-except socket.timeout:
-    print "Timed out, exit!"
-except KeyboardInterrupt:
-    print "Caught keyboard interrupt!"
-finally:
-    u.close()
+        u = Udp('', 4298)
+        try:
+            u.bind(port=4297)
+            u.set_broadcast(True)
+            u.set_timeout(10.0)
+            try:
+                u.broadcast("Hello everybody!\n")
+            except socket.error:
+                print "Socket error, try again ... "
+                continue
+            try:
+                data, addr = u.recv()
+                print "[%s]: %s" % (addr, data)
+            except socket.timeout:
+                print "Timed out..."
+            time.sleep (4)
+        except KeyboardInterrupt:
+            print "Exit"
+            return
+        finally:
+            u.close()
+
+if __name__ == '__main__' :
+    main()
