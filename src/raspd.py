@@ -10,7 +10,7 @@ import logging.handlers
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '0.5b'
+__version__ = '0.6b'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -289,6 +289,7 @@ class ETHService (object):
         self._log = logging.getLogger("ethd")
         self._lock = threading.RLock()
         self._state = self.ST_DOWN
+        self._log.info("Starting ETH Service")
         self._bind()
 
     def _bind (self):
@@ -307,6 +308,7 @@ class ETHService (object):
             self._lock.acquire()
             try:
                 if self._state == self.ST_DOWN:
+                    self._log.debug("ETH Service is UP now")
                     self._state = self.ST_UP
             finally:
                 self._lock.release()
@@ -316,7 +318,7 @@ class ETHService (object):
             data, addr = self._udp.recv()
             self._log.debug("Got request from '%s' : '%s'"
                             % (addr, data))
-            u.send("[ethd]: Hello reply from PI", addr=addr)
+            self._udp.send("[ethd]: Hello reply from PI", addr=addr)
         except socket.timeout:
             pass
 
@@ -324,6 +326,7 @@ class ETHService (object):
         status = self.ST_DOWN
         self._lock.acquire()
         try:
+            status = self._state
             if self._state == self.ST_DOWN:
                 self._log.debug("Try to bind")
                 self._bind()
