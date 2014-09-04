@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 import socket
 import subprocess
-import RPi.GPIO as gpio
 import sys
 import time
 import threading
 import signal
 import logging
+import optparse
 import logging.handlers
 import traceback
 
@@ -22,7 +22,6 @@ _SYSLOG_FORMAT = "[raspd] %(name)s : %(levelname)s : %(message)s"
 
 logging.basicConfig(stream=sys.stderr, format=_DEFAULT_LOG_FORMAT,
                     level=logging.DEBUG)
-logging.debug("Start raspd")
 
 
 class Udp(object):
@@ -355,7 +354,6 @@ class ETHService (object):
 
     def _update_udp (self):
         try:
-            self._log.debug("Before receive")
             data, addr = self._udp.recv()
             self._log.debug("Got request from '%s' : '%s'"
                             % (addr, data))
@@ -396,7 +394,10 @@ def sigterm_handler (signum, frame):
     raise TermRequest
 
 
-def main ():
+def daemon_main ():
+    global gpio
+    import RPi.GPIO as gpio
+    logging.debug("Start raspd")
     r = logging.getLogger()
     sysl = logging.handlers.SysLogHandler(address='/dev/log')
     sysl.setFormatter(logging.Formatter(_SYSLOG_FORMAT))
@@ -427,5 +428,50 @@ def main ():
             cb()
 
 
+def hello_main ():
+    logging.debug("Start raspd hello user program")
+    while True:
+        u = Udp('', 4298)
+        try:
+            u.bind(port=4297)
+            u.set_broadcast(True)
+            u.set_timeout(10.0)
+            try:
+                u.broadcast("Hello everybody!\n")
+            except socket.error:
+                print "Socket error, try again ... "
+                continue
+            try:
+                data, addr = u.recv()
+                print "[%s]: %s" % (addr, data)
+            except socket.timeout:
+                print "Timed out..."
+            time.sleep (4)
+        except KeyboardInterrupt:
+            print "Exit"
+            return
+        finally:
+            u.close()
+
+
+def main (argv):
+    parser = optparse.OptionParser(
+        usage="usage: %prog [options]",
+        version=("%prog " + __version__)
+    )
+    parser.add_option("--daemon",
+                      action="store_true",
+                      default=False,
+                      dest="daemon",
+                      help="Start daemon"
+    )
+    parser.set_defaults()
+    options, args = parser.parse_args(argv)
+    if options.daemon:
+        daemon_main()
+    else:
+        hello_main()
+
+
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])
