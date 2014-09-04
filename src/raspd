@@ -13,7 +13,7 @@
 ### END INIT INFO
 
 # Change the next 3 lines to suit where you install your script and what you want to call it
-DIR=/home/pi
+DIR=/usr/local/bin
 DAEMON=$DIR/raspd.py
 DAEMON_NAME=raspd
 
@@ -28,7 +28,7 @@ PIDFILE=/var/run/${DAEMON_NAME}.pid
 
 do_start () {
     log_daemon_msg "Starting system ${DAEMON_NAME} daemon"
-    start-stop-daemon --start --background --pidfile $PIDFILE --make-pidfile --user ${DAEMON_USER} --startas $DAEMON
+    start-stop-daemon --start --background --pidfile $PIDFILE --make-pidfile --user ${DAEMON_USER} --startas $DAEMON -- --daemon
     log_end_msg $?
 }
 do_stop () {
