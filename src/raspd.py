@@ -5,12 +5,14 @@ import RPi.GPIO as gpio
 import sys
 import time
 import threading
+import signal
 import logging
 import logging.handlers
+import traceback
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '0.6b'
+__version__ = '0.8b'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -76,6 +78,40 @@ class Udp(object):
         self._sock.close()
 
 
+class AudioMan (object):
+
+    def __init__ (self):
+        self._sound_active = False
+        self._log = logging.getLogger("audio")
+        self._p = None
+        self._lock = threading.RLock()
+
+    def _activate_sound (self):
+        if not self._sound_active:
+            self._log.debug("Activate audio jack")
+            subprocess.call(["amixer", "cset", "numid=3", "1"])
+            self._sound_active = True
+
+    def play (self, path):
+        self._activate_sound()
+        with self._lock:
+            if self._p is not None:
+                ret = self._p.poll()
+                self._log.debug("Process rc=%s" % str(ret))
+                if ret is None:
+                    self._log.debug("Terminate old process")
+                    try:
+                        self._p.terminate()
+                        self._p.wait()
+                    except OSError as e:
+                        if e.errno == 3:
+                            self._log.warn("Couldn't terminate process (already terminated)")
+                        else:
+                            raise
+            self._log.debug("Start mplayer audio output")
+            self._p = subprocess.Popen(["mplayer", path])
+
+
 class ShutdownMan(object):
     ST_RUNNING = 0
     ST_REQUEST_QUIT = 1
@@ -91,11 +127,13 @@ class ShutdownMan(object):
         self._log = logging.getLogger("shutdownd")
         self._to = None
         self._rq = 0
+        self._audio = AudioMan()
 
     def _timer_cancel (self):
         self._lock.acquire()
         try:
             if self._state == self.ST_REQUEST_CANCEL:
+                play = True
                 self._log.info("Shutdown has been canceled")
                 self._state = self.ST_RUNNING
                 self._to = None
@@ -131,11 +169,14 @@ class ShutdownMan(object):
             subprocess.call(["shutdown", "-hP", "now"])
 
     def __call__ (self, channel):
+        play_sd = False
+        play_cancel = False
         self._lock.acquire()
         try:
             self._rq += 1
             self._log.debug("trigger #%d" % self._rq)
             if self._state == self.ST_RUNNING:
+                play_sd = True
                 self._log.info("Receive shutdown event")
                 self._state = self.ST_REQUEST_QUIT
                 self._to = threading.Timer(self.TIMEOUT_PRESS_S,
@@ -147,12 +188,18 @@ class ShutdownMan(object):
                 self._state = self.ST_REQUEST_CANCEL
                 if self._to is not None:
                     self._to.cancel()
+                play_cancel = True
                 self._to = threading.Timer(self.TIMEOUT_PRESS_S,
                                            self._timer_cancel)
                 self._to.setName("timer-cancel")
                 self._to.start()
         finally:
             self._lock.release()
+        if play_sd:
+            self._audio.play("/home/pi/sound/shutdown.mp3")
+        if play_cancel:
+            self._audio.play("/home/pi/sound/cancel.mp3")
+
 
 class GPIOTrigger (object):
     ST_WAIT = 0
@@ -208,17 +255,10 @@ class GPIOTrigger (object):
 class StartStopTrigger (GPIOTrigger):
     def __init__ (self):
         GPIOTrigger.__init__(self, self._startstop)
-        self._stop = True
         self._log = logging.getLogger("start-stop-trigger")
 
     def _startstop (self):
-        if self._stop:
-            self._log.info("Stop playback (if running)")
-            subprocess.call(["mpc", "pause"])
-        else:
-            self._log.info("Start playback (if not running)")
-            subprocess.call(["mpc", "play"])
-        self._stop = not self._stop
+        subprocess.call(["mpc", "toggle"])
 
 
 class GPIOService (object):
@@ -315,12 +355,13 @@ class ETHService (object):
 
     def _update_udp (self):
         try:
+            self._log.debug("Before receive")
             data, addr = self._udp.recv()
             self._log.debug("Got request from '%s' : '%s'"
                             % (addr, data))
             self._udp.send("[ethd]: Hello reply from PI", addr=addr)
         except socket.timeout:
-            pass
+            self._log.debug("Timeout")
 
     def update (self):
         status = self.ST_DOWN
@@ -339,11 +380,20 @@ class ETHService (object):
     def close (self):
         self._udp.broadcast("[ethd]: Bye from PI")
         self._udp.close()
+        self._log.info("Stop ETH Service")
 
 
 def enable_eth0 ():
-    subprocess.call (["ifdown", "eth0"])
-    subprocess.call (["ifup", "eth0"])
+    subprocess.call(["ifdown", "eth0"])
+    subprocess.call(["ifup", "eth0"])
+
+
+class TermRequest (Exception):
+    pass
+
+
+def sigterm_handler (signum, frame):
+    raise TermRequest
 
 
 def main ():
@@ -352,20 +402,29 @@ def main ():
     sysl.setFormatter(logging.Formatter(_SYSLOG_FORMAT))
     sysl.setLevel(logging.INFO)
     r.addHandler(sysl)
-
-    gpio_service = GPIOService()
-
-    enable_eth0()
-    eth_service = ETHService()
-
+    cleanup_chain = list()
+    signal.signal(signal.SIGTERM, sigterm_handler)
     try:
+        gpio_service = GPIOService()
+        cleanup_chain.append(('GPIO service', gpio_service.cleanup))
+
+        enable_eth0()
+        eth_service = ETHService()
+        cleanup_chain.append(('ETH service', eth_service.close))
+
         while True:
             eth_service.update()
     except KeyboardInterrupt:
         logging.info("Caught keyboard interrupt!")
+    except TermRequest:
+        logging.info("Got termination request")
+    except Exception as e:
+        with open("/raspd-error.log", 'w') as f:
+            traceback.print_exc(None, f)
     finally:
-        gpio_service.cleanup()
-        eth_service.close()
+        for name, cb in cleanup_chain:
+            logging.info("Cleanup '%s'" % name)
+            cb()
 
 
 if __name__ == '__main__':
