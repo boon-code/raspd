@@ -263,6 +263,7 @@ class StartStopTrigger (GPIOTrigger):
 class GPIOService (object):
     SHUTDOWN_GPIO = 18
     MPD_STOP_GPIO = 16
+    ALIVE_GPIO = 12
     DEBOUNCE_MS = 200
     isInitialized = False
     ST_UNREGISTERED = 0
@@ -280,6 +281,8 @@ class GPIOService (object):
         gpio.setmode(gpio.BOARD) # Use P1 header numbers
         gpio.setup(cls.SHUTDOWN_GPIO, gpio.IN, pull_up_down=gpio.PUD_UP)
         gpio.setup(cls.MPD_STOP_GPIO, gpio.IN, pull_up_down=gpio.PUD_UP)
+        gpio.setup(cls.ALIVE_GPIO, gpio.OUT)
+        gpio.output(cls.ALIVE_GPIO, True)
         cls.isInitialized = True
 
     def __init__ (self):
