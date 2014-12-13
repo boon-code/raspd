@@ -14,7 +14,6 @@ clean:
 	$(RM) -rf build/
 
 install:
-	$(PYTHON) setup.py build
 	sudo $(PYTHON) setup.py install --record install-log.txt
 	sudo insserv raspd
 	sudo service raspd restart
