@@ -9,10 +9,11 @@ import logging
 import optparse
 import logging.handlers
 import traceback
+from datetime import datetime
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '0.8b'
+__version__ = '0.8.2b'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -360,7 +361,15 @@ class ETHService (object):
             data, addr = self._udp.recv()
             self._log.debug("Got request from '%s' : '%s'"
                             % (addr, data))
-            self._udp.send("[ethd]: Hello reply from PI", addr=addr)
+            if addr[0] == '127.0.0.1':
+                if data == 'add':
+                    self._log.info("attach Arduino")
+                    self._udp.send("ok", addr=addr)
+                elif data == 'remove':
+                    self._log.info("detach Arduino")
+                    self._udp.send("ok", addr=addr)
+            else:
+                self._udp.send("[ethd]: Hello reply from PI", addr=addr)
         except socket.timeout:
             self._log.debug("Timeout")
 
@@ -416,6 +425,8 @@ def daemon_main ():
         eth_service = ETHService()
         cleanup_chain.append(('ETH service', eth_service.close))
 
+        logging.info("raspd v%s started!" % __version__)
+
         while True:
             eth_service.update()
     except KeyboardInterrupt:
@@ -423,7 +434,9 @@ def daemon_main ():
     except TermRequest:
         logging.info("Got termination request")
     except Exception as e:
+        logging.error("Caught unhandled exception %s" % str(e))
         with open("/raspd-error.log", 'w') as f:
+            f.write("%s\n" % datetime.now().isoformat())
             traceback.print_exc(None, f)
     finally:
         for name, cb in cleanup_chain:
@@ -457,6 +470,37 @@ def hello_main ():
             u.close()
 
 
+def _send_event (u, event):
+    retries = 2
+    while retries > 0:
+        try:
+            u.send(event, ip='127.0.0.1')
+            data, addr = u.recv()
+            if addr[0] == '127.0.0.1' and data == 'ok':
+                logging.debug("OK received (r=%d)" % retries)
+                return 0
+        except socket.timeout:
+            retries -= 1
+            logging.warn("Communication timeout -> retries %d" % retries)
+    return 1
+
+def udev_event (args):
+    n_args = len(args)
+    if n_args != 1:
+        logging.error("Wrong number of arguments %d" % n_args)
+        return 1
+    if args[0] not in ('add', 'remove'):
+        logging.error("Wrong event '%s'" % args[0])
+        return 1
+    u = Udp('127.0.0.1', 4298)
+    try:
+        u.bind(port=4297)
+        u.set_timeout(2.0)
+        _send_event(u, args[0])
+    finally:
+        u.close()
+
+
 def main (argv):
     parser = optparse.OptionParser(
         usage="usage: %prog [options]",
@@ -468,13 +512,39 @@ def main (argv):
                       dest="daemon",
                       help="Start daemon"
     )
-    parser.set_defaults()
+    parser.add_option("--udev",
+                      action="store_true",
+                      default=False,
+                      dest='udev',
+                      help="Trigger udev event"
+    )
+    parser.add_option("-v", "--verbose",
+                      action="store_const",
+                      dest="loglevel",
+                      const=logging.DEBUG,
+                      help="Verbose debug messages"
+    )
+    parser.add_option("-q", "--quiet",
+                      action="store_const",
+                      dest="loglevel",
+                      const=logging.WARNING,
+                      help="Only show warnings"
+    )
+    parser.set_defaults(loglevel=logging.INFO)
     options, args = parser.parse_args(argv)
-    if options.daemon:
+    r = logging.getLogger()
+    r.setLevel(options.loglevel)
+    if options.daemon and (not options.udev):
         daemon_main()
+        return 0
+    elif options.udev and (not options.daemon):
+        return udev_event(args)
+    elif options.daemon and options.udev:
+        parser.error("Can't specify 'daemon' and 'udev'!")
+        return 1
     else:
-        hello_main()
+        return hello_main()
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))
